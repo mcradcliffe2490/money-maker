@@ -17,10 +17,47 @@ const configuration = new Configuration({
 
 const openai = new OpenAIApi(configuration);
 
+//Alpaca Javascript trader 
+const AlpacaAPI = require('@alpacahq/alpaca-trade-api');
+const alpaca = new AlpacaAPI ({
+  keyId: API_KEYS.alpacaKeyID,
+  secretKey: API_KEYS.alpacaSecretKey,
+  paper: true
+})
+
+// PUPPETEER Scrapes data from Reddit to better contextualize AI results
+// Headless browser is created to scrape internet pages
+
+const puppeteer = require('puppeteer');
+
+async function scrape() {
+  const browser = await puppeteer.launch();
+  const page = await browser.newPage();
+
+  await page.goto("https://www.reddit.com/r/wallstreetbets/hot/", {
+    waitUntil: 'networkidle2'
+  });
+
+  await page.waitForTimeout(3000);
+  
+  await page.screenshot({path: 'example.png'});
+
+  // TODO: Improve by adding functionality to only grab positively talked about tickers
+  const redditHomePage = await page.evaluate(async () => {
+    return document.body.innerText;
+  });
+  await browser.close();
+
+  return redditHomePage;
+} 
+
 //
 exports.helloWorld = functions.https.onRequest(async (request, response) => {
+
+  const redditData = await scrape();
+
   const gptCompletion = await openai.createCompletion("text-davinci-001", {
-    prompt: 'The following stock tickers are popular on r/wallstreetbets',
+    prompt: `${redditData}. The following stock tickers  are popular on r/wallstreetbets`,
     temperature: 0.7,
     max_tokens: 32,
     top_p: 1,
@@ -28,6 +65,26 @@ exports.helloWorld = functions.https.onRequest(async (request, response) => {
     presence_penalty: 0
   });
 
-  response.send(gptCompletion.data) 
+  const stocksToBuy = gptCompletion.data.choices[0].text.match(/\b[A-Z]+\b/g);
+
+  // Get account and check your buying power 
+  const account = await alpaca.getAccount();
+  console.log(`buying power:  ${account.buying_power}`)
+
+  // place orders
+  const orders = new Array(stocksToBuy.length);
+  i = 0;
+  while(i < stocksToBuy.length) {
+    orders[i] = await alpaca.createOrder({
+      symbol: stocksToBuy[i],
+      notional: account.buying_power * (1/stocksToBuy.length), // uses a fraction of buying power based on number of stocks given
+      side: 'buy',
+      type: 'market',
+      time_in_force: 'day'
+    });
+    i+=1;
+  }
+
+  response.send('order placed! Check your Alpaca account') 
 
 });
