@@ -1,12 +1,8 @@
-
-
 const functions = require("firebase-functions");
 
 // // Create and Deploy Your First Cloud Functions
 // // https://firebase.google.com/docs/functions/write-firebase-functions
-
-const API_KEYS = require('./app-env.js')
-
+const API_KEYS = require('./app-env.js');
 
 // SDK Config //
 const {Configuration, OpenAIApi } = require("openai");
@@ -17,13 +13,13 @@ const configuration = new Configuration({
 
 const openai = new OpenAIApi(configuration);
 
-//Alpaca Javascript trader 
+// Alpaca Javascript trader 
 const AlpacaAPI = require('@alpacahq/alpaca-trade-api');
 const alpaca = new AlpacaAPI ({
   keyId: API_KEYS.alpacaKeyID,
   secretKey: API_KEYS.alpacaSecretKey,
   paper: true
-})
+});
 
 // PUPPETEER Scrapes data from Reddit to better contextualize AI results
 // Headless browser is created to scrape internet pages
@@ -49,12 +45,20 @@ async function scrape() {
   await browser.close();
 
   return redditHomePage;
-} 
+}
 
-//
 exports.helloWorld = functions.https.onRequest(async (request, response) => {
+  // test logic here
 
-  const redditData = await scrape();
+});
+
+exports.getMoney = functions.runWith({memory: '4GB'}).pubsub
+  .schedule("0 10 * * 1-5")
+  .timeZone('America/New_York')
+  .onRun(async (ctx) => {
+    console.log('This algorithm will run Monday through Friday at 10 am Eastern');
+
+    const redditData = await scrape();
 
   const gptCompletion = await openai.createCompletion("text-davinci-001", {
     prompt: `${redditData}. The following stock tickers  are popular on r/wallstreetbets`,
@@ -67,13 +71,17 @@ exports.helloWorld = functions.https.onRequest(async (request, response) => {
 
   const stocksToBuy = gptCompletion.data.choices[0].text.match(/\b[A-Z]+\b/g);
 
+  // every day, all unfilled orders are cancelled and all positions are closed
+  const cancel = await alpaca.cancelAllOrders();
+  const liquidate = await alpaca.closeAllPositions(); 
+
   // Get account and check your buying power 
   const account = await alpaca.getAccount();
-  console.log(`buying power:  ${account.buying_power}`)
+  console.log(`buying power:  ${account.buying_power}`);
 
   // place orders
   const orders = new Array(stocksToBuy.length);
-  i = 0;
+  var i = 0;
   while(i < stocksToBuy.length) {
     orders[i] = await alpaca.createOrder({
       symbol: stocksToBuy[i],
@@ -87,4 +95,5 @@ exports.helloWorld = functions.https.onRequest(async (request, response) => {
 
   response.send('order placed! Check your Alpaca account') 
 
-});
+  });
+
